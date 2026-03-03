@@ -1,0 +1,45 @@
+{
+  "name": "pi-fetch",
+  "version": "0.1.0",
+  "description": "Efficient web fetch tool for Pi",
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "GPL-2.0-only",
+  "author": "Stipe Kotarac <stipe@kotarac.net>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kotarac/pi-fetch.git"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=24",
+    "pnpm": ">=10"
+  },
+  "files": [
+    "extensions/"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/fetch.ts"
+    ]
+  },
+  "scripts": {
+    "fmt": "biome check --write .",
+    "tsc": "tsc -p tsconfig.json --noEmit"
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*",
+    "@sinclair/typebox": "*"
+  },
+  "dependencies": {
+    "@kreuzberg/html-to-markdown-node": "^2.27.2"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.5",
+    "@mariozechner/pi-coding-agent": "*",
+    "@sinclair/typebox": "*",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.8.2"
+  }
+}

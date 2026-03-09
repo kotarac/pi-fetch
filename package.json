@@ -1,6 +1,6 @@
 {
   "name": "pi-fetch",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Efficient web fetch tool for Pi",
   "keywords": [
     "pi-package"

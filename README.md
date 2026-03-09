@@ -46,11 +46,6 @@ Try the package for a single run:
 - The tool prioritizes efficiency and keeping output compact/predictable for LLM context, even if that means it won’t choose the best possible representation for every site.
 - Extensions execute with full system permissions. Only install code you trust.
 
-## Development
-
-- `pnpm run fmt`
-- `pnpm run tsc`
-
 ## License
 
 GPL-2.0-only

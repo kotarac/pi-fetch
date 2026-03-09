@@ -14,7 +14,7 @@
   "type": "module",
   "engines": {
     "node": ">=24",
-    "pnpm": ">=10"
+    "npm": ">=11"
   },
   "files": [
     "extensions/"
@@ -33,13 +33,13 @@
     "@sinclair/typebox": "*"
   },
   "dependencies": {
-    "@kreuzberg/html-to-markdown-node": "^2.27.2"
+    "@kreuzberg/html-to-markdown-node": "^2.28.1"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.4.5",
+    "@biomejs/biome": "^2.4.6",
     "@mariozechner/pi-coding-agent": "*",
     "@sinclair/typebox": "*",
     "@types/node": "^24.0.0",
-    "typescript": "^5.8.2"
+    "typescript": "^5.9.3"
   }
 }

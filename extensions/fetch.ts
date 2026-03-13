@@ -382,7 +382,13 @@ function stripWriteOut(stderr: string): string {
   const endIndex = stderr.indexOf(endMarker, startIndex + startMarker.length)
   if (endIndex === -1) return stderr
   const tailIndex = endIndex + endMarker.length
-  return `${stderr.slice(0, startIndex)}${stderr.slice(tailIndex)}`
+  const head = stderr.slice(0, startIndex)
+  const tail = stderr.slice(tailIndex)
+  if (!head || !tail) return `${head}${tail}`
+  const headEndsWithNewline = head.endsWith('\n') || head.endsWith('\r\n')
+  const tailStartsWithNewline = tail.startsWith('\n') || tail.startsWith('\r\n')
+  const separator = headEndsWithNewline || tailStartsWithNewline ? '' : '\n'
+  return `${head}${separator}${tail}`
 }
 
 function parseHeaderFile(contents: string): string[] {
@@ -773,4 +779,21 @@ export default function (pi: ExtensionAPI) {
       )
     },
   })
+}
+
+export const __test__ = {
+  getCandidateHostname,
+  getHeaderValue,
+  isHtmlContentType,
+  isMarkdownContentType,
+  isTextualContentType,
+  looksLikeHtml,
+  normalizeContentType,
+  normalizeUrl,
+  parseHeaderFile,
+  parseWriteOut,
+  rewriteGithubBlobUrlToRaw,
+  rewriteUrlForFetch,
+  shouldDefaultToHttp,
+  stripWriteOut,
 }

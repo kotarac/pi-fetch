@@ -17,7 +17,7 @@
     "npm": ">=11"
   },
   "files": [
-    "extensions/"
+    "extensions/fetch.ts"
   ],
   "pi": {
     "extensions": [
@@ -26,6 +26,7 @@
   },
   "scripts": {
     "fmt": "biome check --write .",
+    "test": "node --test",
     "tsc": "tsc -p tsconfig.json --noEmit"
   },
   "peerDependencies": {

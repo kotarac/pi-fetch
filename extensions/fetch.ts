@@ -2,10 +2,65 @@ import { spawn } from 'node:child_process'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { convertBuffer, type JsConversionOptions, JsPreprocessingPreset } from '@kreuzberg/html-to-markdown-node'
+import { convertWithVisitor, JsCodeBlockStyle, type JsConversionOptions, JsHeadingStyle, type JsNodeContext, JsPreprocessingPreset } from '@kreuzberg/html-to-markdown-node'
 import type { ExtensionAPI } from '@mariozechner/pi-coding-agent'
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, truncateHead } from '@mariozechner/pi-coding-agent'
 import { Type } from '@sinclair/typebox'
+
+const skipTags = new Set([
+  'amp-iframe',
+  'amp-img',
+  'amp-video',
+  'audio',
+  'button',
+  'canvas',
+  'datalist',
+  'embed',
+  'fieldset',
+  'form',
+  'frame',
+  'frameset',
+  'iframe',
+  'img',
+  'input',
+  'keygen',
+  'label',
+  'legend',
+  'meter',
+  'object',
+  'optgroup',
+  'option',
+  'output',
+  'picture',
+  'progress',
+  'select',
+  'source',
+  'svg',
+  'textarea',
+  'track',
+  'video',
+])
+const conversionVisitor = {
+  async visitElementStart(payload: string): Promise<string> {
+    if (typeof payload !== 'string' || payload.length === 0) return JSON.stringify({ type: 'continue' })
+    let nodeContext: JsNodeContext
+    try {
+      nodeContext = JSON.parse(payload) as JsNodeContext
+    } catch {
+      return JSON.stringify({ type: 'continue' })
+    }
+    const rawTagName = typeof nodeContext.tagName === 'string' ? nodeContext.tagName : ''
+    const tagName = rawTagName.replace(/\/+$/, '').toLowerCase()
+    if (!tagName) return JSON.stringify({ type: 'continue' })
+    if (skipTags.has(tagName)) return JSON.stringify({ type: 'skip' })
+    return JSON.stringify({ type: 'continue' })
+  },
+}
+const conversionOptions: JsConversionOptions = {
+  preprocessing: { enabled: true, preset: JsPreprocessingPreset.Aggressive, removeNavigation: true, removeForms: true },
+  headingStyle: JsHeadingStyle.Atx,
+  codeBlockStyle: JsCodeBlockStyle.Backticks,
+}
 
 function rewriteGithubBlobUrlToRaw(parsed: URL): URL | undefined {
   const hostname = parsed.hostname.toLowerCase()
@@ -195,6 +250,7 @@ type CurlExecResult = {
   stderr: string
 }
 
+const CURL_USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36'
 const MAX_CURL_STDOUT_BYTES = 12 * 1024 * 1024
 
 async function execCurl(args: string[], timeoutMs: number, signal: AbortSignal | undefined): Promise<CurlExecResult> {
@@ -509,11 +565,6 @@ export default function (pi: ExtensionAPI) {
     const directories = tempDirectories.splice(0, tempDirectories.length)
     await Promise.all(directories.map((directory) => rm(directory, { recursive: true, force: true }).catch(() => undefined)))
   })
-  const stripTags = ['img', 'svg', 'picture', 'source', 'video', 'audio', 'track', 'embed', 'object', 'canvas', 'iframe', 'frame', 'frameset', 'amp-img', 'amp-video', 'amp-iframe']
-  const conversionOptions: JsConversionOptions = {
-    preprocessing: { enabled: true, preset: JsPreprocessingPreset.Aggressive },
-    stripTags,
-  }
   pi.registerTool({
     name: 'fetch',
     label: 'Fetch',
@@ -542,7 +593,7 @@ export default function (pi: ExtensionAPI) {
           details: { url: params.url } satisfies FetchToolDetails,
         }
       const timeoutMs = 30_000
-      const httpHeaders = ['Accept: text/html, application/xhtml+xml;q=0.9, */*;q=0.8', 'User-Agent: pi-fetch (+https://github.com/kotarac/pi-fetch)']
+      const httpHeaders = ['Accept: text/html, application/xhtml+xml;q=0.9, */*;q=0.8', 'Accept-Language: en-US,en;q=0.9', `User-Agent: ${CURL_USER_AGENT}`]
       let response: Awaited<ReturnType<typeof curlGet>>
       try {
         const capabilities = await ensureCurlCapabilities()
@@ -642,7 +693,7 @@ export default function (pi: ExtensionAPI) {
         const conversionInput = bodyBytes.length > maxConversionBytes ? bodyBytes.subarray(0, maxConversionBytes) : bodyBytes
         let converted: string
         try {
-          converted = convertBuffer(conversionInput, conversionOptions).trim()
+          converted = (await convertWithVisitor(conversionInput.toString('utf8'), conversionOptions, conversionVisitor)).trim()
         } catch (error) {
           const conversionError = getErrorInfo(error).message
           const output = bodyBytes.toString('utf8').trim()

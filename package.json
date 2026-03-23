@@ -40,7 +40,7 @@
     "@biomejs/biome": "^2.4.8",
     "@mariozechner/pi-coding-agent": "*",
     "@sinclair/typebox": "*",
-    "@types/node": "^24.0.0",
+    "@types/node": "24",
     "typescript": "^5.9.3"
   }
 }

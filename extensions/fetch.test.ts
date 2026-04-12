@@ -113,3 +113,32 @@ test('content-type helper predicates behave as expected', () => {
   assert.equal(__test__.isTextualContentType('application/json'), true)
   assert.equal(__test__.isTextualContentType('application/octet-stream'), false)
 })
+
+test('sanitizeTextForTerminal strips control characters and keeps line formatting', () => {
+  const input = 'hello\u001b[31m\u0000\u0007 world\n\tline 2\r\n'
+  assert.equal(__test__.sanitizeTextForTerminal(input), 'hello world\n\tline 2\n')
+})
+
+test('sanitizeTextForTerminal strips carriage returns to avoid terminal overwrite effects', () => {
+  assert.equal(__test__.sanitizeTextForTerminal('safe\rspoof'), 'safespoof')
+})
+
+test('sanitizeTextForTerminal returns empty string for empty input', () => {
+  assert.equal(__test__.sanitizeTextForTerminal(''), '')
+})
+
+test('sanitizeTextForTerminal strips bidi control characters to prevent text spoofing', () => {
+  assert.equal(__test__.sanitizeTextForTerminal('safe\u202Eofpoos'), 'safeofpoos')
+  assert.equal(__test__.sanitizeTextForTerminal('a\u2066b\u2069c'), 'abc')
+})
+
+test('html conversion skips non-text tags to avoid bloat', async () => {
+  const html = '<p>hello</p><img alt="ALT" src="x"/><textarea>SECRET</textarea><svg><text>SVGTEXT</text></svg><iframe>IFRAMETEXT</iframe><p>world</p>'
+  const converted = await __test__.convertHtmlToMarkdown(html)
+  assert.equal(converted.includes('hello'), true)
+  assert.equal(converted.includes('world'), true)
+  assert.equal(converted.includes('ALT'), false)
+  assert.equal(converted.includes('SECRET'), false)
+  assert.equal(converted.includes('SVGTEXT'), false)
+  assert.equal(converted.includes('IFRAMETEXT'), false)
+})

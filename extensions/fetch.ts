@@ -56,6 +56,7 @@ const conversionVisitor = {
     return JSON.stringify({ type: 'continue' })
   },
 }
+
 const conversionOptions: JsConversionOptions = {
   preprocessing: { enabled: true, preset: JsPreprocessingPreset.Aggressive, removeNavigation: true, removeForms: true },
   headingStyle: JsHeadingStyle.Atx,
@@ -151,12 +152,34 @@ function normalizeUrl(rawUrl: string): string | undefined {
   }
 }
 
+const ANSI_ESCAPE_CHARACTER = String.fromCharCode(0x1b)
+const ANSI_CSI_CHARACTER = String.fromCharCode(0x9b)
+const ANSI_ESCAPE_SEQUENCE_PATTERN = new RegExp(`(?:${ANSI_ESCAPE_CHARACTER}[@-Z\\-_]|${ANSI_ESCAPE_CHARACTER}\\[[0-?]*[ -/]*[@-~]|${ANSI_CSI_CHARACTER}[0-?]*[ -/]*[@-~])`, 'gu')
+const BIDI_CONTROL_CHARACTER_PATTERN = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/gu
+
+function sanitizeTextForTerminal(text: string): string {
+  if (!text) return ''
+  const textWithoutAnsi = text.replace(ANSI_ESCAPE_SEQUENCE_PATTERN, '')
+  const textWithoutBidiControls = textWithoutAnsi.replace(BIDI_CONTROL_CHARACTER_PATTERN, '')
+  return textWithoutBidiControls.replace(/\p{Cc}/gu, (character) => {
+    if (character === '\t') return character
+    if (character === '\n') return character
+    return ''
+  })
+}
+
+async function convertHtmlToMarkdown(html: string): Promise<string> {
+  if (!html) return ''
+  const converted = await convertWithVisitor(html, conversionOptions, conversionVisitor)
+  return converted.trim()
+}
+
 function getErrorInfo(error: unknown): { message: string; code?: string } {
-  if (!error || typeof error !== 'object') return { message: String(error) }
+  if (!error || typeof error !== 'object') return { message: sanitizeTextForTerminal(String(error)) }
   const record = error as Record<string, unknown>
-  const code = typeof record.code === 'string' ? record.code : undefined
+  const code = typeof record.code === 'string' ? sanitizeTextForTerminal(record.code) : undefined
   const message = typeof record.message === 'string' ? record.message : String(error)
-  return { message, code }
+  return { message: sanitizeTextForTerminal(message), code }
 }
 
 type FetchToolDetails = {
@@ -641,7 +664,7 @@ export default function (pi: ExtensionAPI) {
         }
       const createTextResult = (text: string, details: FetchToolDetails, isError?: boolean) => {
         const result = {
-          content: [{ type: 'text' as const, text }],
+          content: [{ type: 'text' as const, text: sanitizeTextForTerminal(text) }],
           details,
         }
         if (isError === undefined) return result
@@ -678,9 +701,9 @@ export default function (pi: ExtensionAPI) {
         let text = `Fetched ${formatSize(bodyBytes.length)} of ${contentType || 'unknown content-type'} from ${finalUrl}.`
         if (tempFile) text += ` Saved to: ${tempFile}`
         if (!tempFile) text += ` Could not save to a temp file: ${tempFileError || 'unknown error'}`
-        return {
-          content: [{ type: 'text', text }],
-          details: {
+        return createTextResult(
+          text,
+          {
             url,
             finalUrl,
             statusCode,
@@ -691,15 +714,15 @@ export default function (pi: ExtensionAPI) {
             tempFileError,
             totalBytes: bodyBytes.length,
           } satisfies FetchToolDetails,
-          isError: true,
-        }
+          true,
+        )
       }
       if (isHtmlContentType(contentType) || sniffedHtml) {
         const maxConversionBytes = 2 * 1024 * 1024
         const conversionInput = bodyBytes.length > maxConversionBytes ? bodyBytes.subarray(0, maxConversionBytes) : bodyBytes
         let converted: string
         try {
-          converted = (await convertWithVisitor(conversionInput.toString('utf8'), conversionOptions, conversionVisitor)).trim()
+          converted = await convertHtmlToMarkdown(conversionInput.toString('utf8'))
         } catch (error) {
           const conversionError = getErrorInfo(error).message
           const output = bodyBytes.toString('utf8').trim()
@@ -761,8 +784,7 @@ export default function (pi: ExtensionAPI) {
           statusCode >= 400,
         )
       }
-      const decodedBody = bodyBytes.toString('utf8')
-      const output = decodedBody.trim()
+      const output = bodyBytes.toString('utf8').trim()
       if (!output) return createTextResult('No output.', { url, finalUrl, statusCode, contentType } satisfies FetchToolDetails, statusCode >= 400)
       const truncationResult = await truncateAndMaybeSave(output, 'output.html', tempDirectories, maxTempDirectories)
       return createTextResult(
@@ -782,6 +804,7 @@ export default function (pi: ExtensionAPI) {
 }
 
 export const __test__ = {
+  convertHtmlToMarkdown,
   getCandidateHostname,
   getHeaderValue,
   isHtmlContentType,
@@ -796,4 +819,5 @@ export const __test__ = {
   rewriteUrlForFetch,
   shouldDefaultToHttp,
   stripWriteOut,
+  sanitizeTextForTerminal,
 }

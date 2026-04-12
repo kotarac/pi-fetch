@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { convertWithVisitor, JsCodeBlockStyle, type JsConversionOptions, JsHeadingStyle, type JsNodeContext, JsPreprocessingPreset } from '@kreuzberg/html-to-markdown-node'
+import { convert, JsCodeBlockStyle, type JsConversionOptions, JsHeadingStyle, JsPreprocessingPreset } from '@kreuzberg/html-to-markdown-node'
 import type { ExtensionAPI } from '@mariozechner/pi-coding-agent'
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, truncateHead } from '@mariozechner/pi-coding-agent'
 import { Type } from '@sinclair/typebox'
@@ -40,23 +40,6 @@ const skipTags = new Set([
   'track',
   'video',
 ])
-const conversionVisitor = {
-  async visitElementStart(payload: string): Promise<string> {
-    if (typeof payload !== 'string' || payload.length === 0) return JSON.stringify({ type: 'continue' })
-    let nodeContext: JsNodeContext
-    try {
-      nodeContext = JSON.parse(payload) as JsNodeContext
-    } catch {
-      return JSON.stringify({ type: 'continue' })
-    }
-    const rawTagName = typeof nodeContext.tagName === 'string' ? nodeContext.tagName : ''
-    const tagName = rawTagName.replace(/\/+$/, '').toLowerCase()
-    if (!tagName) return JSON.stringify({ type: 'continue' })
-    if (skipTags.has(tagName)) return JSON.stringify({ type: 'skip' })
-    return JSON.stringify({ type: 'continue' })
-  },
-}
-
 const conversionOptions: JsConversionOptions = {
   preprocessing: { enabled: true, preset: JsPreprocessingPreset.Aggressive, removeNavigation: true, removeForms: true },
   headingStyle: JsHeadingStyle.Atx,
@@ -168,9 +151,150 @@ function sanitizeTextForTerminal(text: string): string {
   })
 }
 
+const rawTextTags = new Set(['script', 'style', 'title', 'xmp'])
+const voidElements = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr'])
+
+function isTagNameCharacter(character: string): boolean {
+  return /^[A-Za-z0-9:-]$/.test(character)
+}
+
+function findTagCloseIndex(html: string, index: number): number {
+  let quoteCharacter: string | undefined
+  for (let cursor = index; cursor < html.length; cursor += 1) {
+    const character = html[cursor]
+    if (quoteCharacter) {
+      if (character === quoteCharacter) quoteCharacter = undefined
+      continue
+    }
+    if (character === '"' || character === "'") {
+      quoteCharacter = character
+      continue
+    }
+    if (character === '>') return cursor
+  }
+  return -1
+}
+
+function findRawTextClosingTagStart(lowerHtml: string, fromIndex: number, tagName: string): number {
+  const marker = `</${tagName}`
+  let searchIndex = fromIndex
+  while (searchIndex < lowerHtml.length) {
+    const markerIndex = lowerHtml.indexOf(marker, searchIndex)
+    if (markerIndex === -1) return -1
+    const boundaryCharacter = lowerHtml[markerIndex + marker.length]
+    if (!boundaryCharacter) return markerIndex
+    if (/\s|>|\//.test(boundaryCharacter)) return markerIndex
+    searchIndex = markerIndex + marker.length
+  }
+  return -1
+}
+
+function stripSkippedHtmlElements(html: string): string {
+  if (!html) return ''
+  const lowerHtml = html.toLowerCase()
+  const outputSegments: string[] = []
+  const skippedTagStack: string[] = []
+  let cursor = 0
+  while (cursor < html.length) {
+    const openIndex = html.indexOf('<', cursor)
+    if (openIndex === -1) {
+      if (skippedTagStack.length === 0) outputSegments.push(html.slice(cursor))
+      return outputSegments.join('')
+    }
+    if (skippedTagStack.length === 0 && openIndex > cursor) outputSegments.push(html.slice(cursor, openIndex))
+    if (openIndex + 1 >= html.length) {
+      if (skippedTagStack.length === 0) outputSegments.push('<')
+      cursor = openIndex + 1
+      continue
+    }
+    const nextCharacter = html[openIndex + 1]
+    if (nextCharacter === '!' && html.startsWith('<!--', openIndex)) {
+      const commentClose = html.indexOf('-->', openIndex + 4)
+      const closeIndex = commentClose === -1 ? html.length - 1 : commentClose + 2
+      if (skippedTagStack.length === 0) outputSegments.push(html.slice(openIndex, closeIndex + 1))
+      cursor = closeIndex + 1
+      continue
+    }
+    if (nextCharacter === '!' || nextCharacter === '?') {
+      const closeIndex = findTagCloseIndex(html, openIndex + 2)
+      if (closeIndex === -1) return outputSegments.join('')
+      if (skippedTagStack.length === 0) outputSegments.push(html.slice(openIndex, closeIndex + 1))
+      cursor = closeIndex + 1
+      continue
+    }
+    if (nextCharacter === '/') {
+      let nameStart = openIndex + 2
+      while (nameStart < html.length && /\s/.test(html[nameStart])) nameStart += 1
+      const firstNameCharacter = html[nameStart]
+      if (!firstNameCharacter || !isTagNameCharacter(firstNameCharacter)) {
+        if (skippedTagStack.length === 0) outputSegments.push('<')
+        cursor = openIndex + 1
+        continue
+      }
+      let nameEnd = nameStart + 1
+      while (nameEnd < html.length && isTagNameCharacter(html[nameEnd])) nameEnd += 1
+      const tagName = lowerHtml.slice(nameStart, nameEnd)
+      const closeIndex = findTagCloseIndex(html, nameEnd)
+      if (closeIndex === -1) return outputSegments.join('')
+      if (skippedTagStack.length === 0) {
+        outputSegments.push(html.slice(openIndex, closeIndex + 1))
+        cursor = closeIndex + 1
+        continue
+      }
+      const stackIndex = skippedTagStack.lastIndexOf(tagName)
+      if (stackIndex !== -1) skippedTagStack.length = stackIndex
+      cursor = closeIndex + 1
+      continue
+    }
+    if (!isTagNameCharacter(nextCharacter)) {
+      if (skippedTagStack.length === 0) outputSegments.push('<')
+      cursor = openIndex + 1
+      continue
+    }
+    let nameEnd = openIndex + 2
+    while (nameEnd < html.length && isTagNameCharacter(html[nameEnd])) nameEnd += 1
+    const tagName = lowerHtml.slice(openIndex + 1, nameEnd)
+    const closeIndex = findTagCloseIndex(html, nameEnd)
+    if (closeIndex === -1) return outputSegments.join('')
+    let trailingCursor = closeIndex - 1
+    while (trailingCursor > nameEnd && /\s/.test(html[trailingCursor])) trailingCursor -= 1
+    const selfClosing = html[trailingCursor] === '/'
+    const isVoidElement = voidElements.has(tagName)
+    if (skippedTagStack.length > 0) {
+      if (skipTags.has(tagName) && !selfClosing && !isVoidElement) skippedTagStack.push(tagName)
+      cursor = closeIndex + 1
+      continue
+    }
+    if (skipTags.has(tagName)) {
+      if (!selfClosing && !isVoidElement) skippedTagStack.push(tagName)
+      cursor = closeIndex + 1
+      continue
+    }
+    if (rawTextTags.has(tagName) && !selfClosing) {
+      const closingTagStart = findRawTextClosingTagStart(lowerHtml, closeIndex + 1, tagName)
+      if (closingTagStart === -1) {
+        outputSegments.push(html.slice(openIndex))
+        return outputSegments.join('')
+      }
+      const closingTagClose = findTagCloseIndex(html, closingTagStart + 2 + tagName.length)
+      if (closingTagClose === -1) {
+        outputSegments.push(html.slice(openIndex))
+        return outputSegments.join('')
+      }
+      outputSegments.push(html.slice(openIndex, closingTagClose + 1))
+      cursor = closingTagClose + 1
+      continue
+    }
+    outputSegments.push(html.slice(openIndex, closeIndex + 1))
+    cursor = closeIndex + 1
+  }
+  return outputSegments.join('')
+}
+
 async function convertHtmlToMarkdown(html: string): Promise<string> {
   if (!html) return ''
-  const converted = await convertWithVisitor(html, conversionOptions, conversionVisitor)
+  const strippedHtml = stripSkippedHtmlElements(html)
+  const converted = convert(strippedHtml, conversionOptions)
   return converted.trim()
 }
 

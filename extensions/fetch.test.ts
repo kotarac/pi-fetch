@@ -142,3 +142,31 @@ test('html conversion skips non-text tags to avoid bloat', async () => {
   assert.equal(converted.includes('SVGTEXT'), false)
   assert.equal(converted.includes('IFRAMETEXT'), false)
 })
+
+test('html conversion skips tags with attributes containing > without leaking content', async () => {
+  const html = '<p>hello</p><button data-check="1 > 0">HIDDEN</button><p>world</p>'
+  const converted = await __test__.convertHtmlToMarkdown(html)
+  assert.equal(converted.includes('hello'), true)
+  assert.equal(converted.includes('world'), true)
+  assert.equal(converted.includes('HIDDEN'), false)
+})
+
+test('html conversion does not treat skipped-tag-like strings in script blocks as real tags', async () => {
+  const html = '<script>const template = "<video>HIDDEN</video>";</script><p>world</p>'
+  const converted = await __test__.convertHtmlToMarkdown(html)
+  assert.equal(converted.includes('world'), true)
+})
+
+test('html conversion does not swallow trailing content after void skip tags without />', async () => {
+  const html = '<p>hello</p><img src="x"><p>world</p>'
+  const converted = await __test__.convertHtmlToMarkdown(html)
+  assert.equal(converted.includes('hello'), true)
+  assert.equal(converted.includes('world'), true)
+})
+
+test('html conversion recovers from mismatched nested skipped-tag closing', async () => {
+  const html = '<audio><iframe>HIDDEN</audio><p>world</p>'
+  const converted = await __test__.convertHtmlToMarkdown(html)
+  assert.equal(converted.includes('HIDDEN'), false)
+  assert.equal(converted.includes('world'), true)
+})
